@@ -3,4 +3,4 @@ layout: page
 title: About
 permalink: /about/
 ---
-My name is Andy.
+I'm Andy Salerno, a software developer living in the pacific northwest.
