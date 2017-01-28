@@ -1,0 +1,647 @@
+---
+layout:  post
+title: "Winning Reversi with Monte Carlo Tree Search"
+categories: monte carlo, artificial intelligence, reversi, othello
+---
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN">
+
+<html>
+<head>
+  <link href='https://fonts.googleapis.com/css?family=Source+Code+Pro' rel='stylesheet' type='text/css'>
+</head>
+
+<style>
+p.b0 {
+    margin-bottom: 0px;
+}
+
+span.c12 {
+    font-weight: bold;
+    font-size: 150%;
+}
+span.c1 {
+    font-family: 'Source Code Pro';
+}
+</style>
+
+<body class="c11">
+    <p class="c0"><span class="c2">Last week, like millions of people across the globe, I was captivated by the 5-game match between professional Go player Lee Sedol and Google Deepmind&rsquo;s AlphaGo.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">The games sparked my renewed interest in artificial intelligence and machine learning.  For the past few days my goal was to create an AI agent to play the simple game of Reversi (aka Othello).  However, I had one condition: I would never hard code into the agent a strategy or technique to play the game.  In other words, my agent would not be told to prioritize corners, or try to capture many enemy pieces, or to set itself up for the endgame -- it would figure all that out on its own, with purely emergent behavior.</span></p>
+
+    <p class="c0"><span class="c2">AlphaGo is an immense system which includes two fundamental strategies: reinforcement learning to generate a heatmap of good moves learned from past experience, and then Monte Carlo tree search to further evaluate those positions.</span></p>
+
+    <p class="c0"><span class="c2">My ultimate goal is to emulate that one-two punch of experience combined with evaluation to master Reversi.  This first post describes the implementation of Monte Carlo tree search, which alone is enough to create a competent Reversi agent.</span></p>
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">(This post is not meant to provide any new insights into MCTS, it is meant to show the uninitiated how one person built one such agent with no experience beforehand).</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2 c12">Why Reversi</span>
+    </p>
+
+
+    <p class="c0"><span class="c2">The game of Reversi was picked because it has a similar presentation to the game Go, with a much, much smaller state space.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">In Reversi, you can&rsquo;t play a piece anywhere you want -- your placement must &ldquo;trap&rdquo; some amount of enemy stones between your new piece and an existing piece of your color. &nbsp;For example, in this board state:</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="b0"><span class="c4">7 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">6 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">5 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">4 - - - O O O - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">3 - - - X X X - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">2 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">1 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">0 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">&nbsp; 0 1 2 3 4 5 6 7</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">If you (black, represented by &lsquo;X&rsquo;) play at (5,5), the resulting board state would be this:</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="b0"><span class="c4">7 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">6 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">5 - - - - - X - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">4 - - - O X X - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">3 - - - X X X - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">2 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">1 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">0 - - - - - - - -</span>
+    </p>
+
+
+    <p class="b0"><span class="c4">&nbsp; 0 1 2 3 4 5 6 7</span>
+    </p>
+
+
+    <p class="b0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">You flipped white&rsquo;s pieces at (5,4) and (4,4) because you trapped them between your pieces at (5,3) and (3,3), respectively. &nbsp;Captures radiate out in all directions, including diagonally, and for any length of pieces (as long as they become surrounded on two ends by your color, you have trapped the enemy pieces).  Captures only occur from the piece you played that turn -- if flipping your captured pieces traps more enemy pieces, they do not become captured as well.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2 c12">Minimax vs Monte Carlo Tree Search</span>
+    </p>
+
+
+    <p class="c0"><span class="c2">Minimax is probably the most intuitive algorithm for decision making in turn based games. &nbsp;It&rsquo;s very similar to how humans think during gameplay: what&rsquo;s the worst thing my opponent can do if I make this move? &nbsp;This move? &nbsp;With several recursive plies (or even recursing to the end of the game if it&rsquo;s computationally feasible), you can be guaranteed to minimize your losses and thereby, hopefully, win.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="b0"><span class="c1">function minimax(gamestate, maxdepth, curdepth):</span>
+    </p>
+
+
+    <p class="b0"><span class="c1">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if curdepth == maxdepth or gamestate is a winning state:</span>
+    </p>
+
+
+    <p class="b0"><span class="c1">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return evaluate(gamestate) # evaluation function</span>
+    </p>
+
+
+    <p class="b0"><span class="c1">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;else</span>
+    </p>
+
+
+    <p class="b0"><span class="c1">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;s1, s2, &hellip; sn are successor states of gamestate</span>
+    </p>
+
+
+    <p class="b0"><span class="c1">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if gamestate is on your turn:</span>
+    </p>
+
+
+    <p class="b0"><span class="c1">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return max(minimax(s1, maxdepth, curdepth+1), &hellip;)</span>
+    </p>
+
+
+    <p class="b0 c7"><span class="c1">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;else if gamestate is on your opponent&rsquo;s turn:</span>
+    </p>
+
+
+    <p class="b0 c9"><span class="c1">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;return min(minimax(s1, maxdepth, curdepth+1) &hellip;)</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">There are several downsides to Minimax.  One is that the branching factor for some games (Go, for instance) is so large that you couldn’t possibly compute more than a few plies ahead (a plie is a turn).  Another is that you need some way to evaluate the state of the game as you are playing it.  That is, to decide the worst thing your opponent can do next turn, you need some notion of what is “bad” and what is “good.”  In checkers, you could say that hopping an opponent’s piece is good, and having your own piece hopped is bad.  So you would craft an evaluation function that returns a higher value for states in which you hop enemy pieces than for states in which you don’t.  It might look something like this:</span></p>
+
+    <script src="https://gist.github.com/andysalerno/4174c81757d8f81313e4.js"></script>
+
+    <p class="c0 c5">
+    </p>
+
+    <p class="c0"><span class="c2">This is an extremely simplistic evaluation function, but it captures the essence.  When running Minimax, your agent would use this function to determine which states have maximum score and which have minimum score.  It will “like” states in which you have more pieces than your opponent, and “dislike” the opposite.</span></p>
+
+    <p class="c0"><span class="c2">Why is this bad? &nbsp;It doesn&rsquo;t sound like a downside. &nbsp;Humans think that way, after all. &nbsp;But it&rsquo;s undesirable for a few reasons. &nbsp;By telling the agent how to score a state, you are limiting its ability to get &ldquo;creative.&rdquo; &nbsp;An evaluation function that always prefers keeping pieces alive might never lead to a clever move where the agent can sacrifice its own piece to gain a better overall position. &nbsp;The world of AI is much more exciting when the agents are determining the value of states on their own.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">Enter Monte Carlo tree search. &nbsp;When I first read how MCTS works, I laughed out loud, because it sounds too ridiculous to work. &nbsp;The gist of it is this: every time it is your turn, determine all the possible moves you can make. &nbsp;For each of those moves, run as many (totally random) simulations as you can, tallying up the win/played ratios of each move. &nbsp;Once your simulations are done, make the move which you simulated the most (you might expect that we&rsquo;d pick the move that</span> <span class="c8 c2">won</span> <span class="c2">the most -- I&rsquo;ll get to that). &nbsp;It sounds crazy at first -- if you&rsquo;re playing a world champion, what good do</span> <span class="c8 c2">random simulations</span> <span class="c2">do you? &nbsp;The pro sure isn&rsquo;t going to play randomly.</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">Well, for one, given enough time MCTS actually converges to Minimax. &nbsp;But instead of trying to calculate a million different ways to play the next</span> <span class="c8 c2">five</span><span class="c2">&nbsp;turns (Minimax), you play a</span> <span class="c8 c2">million</span> <span class="c2">turns randomly</span> <span class="c8 c2">to completion.</span><span class="c2">&nbsp; The result of a Minimax evaluation might be the state of the game in five turns, whereas the result of a Monte Carlo simulation will be either a win or a loss. &nbsp;And, after all, that&rsquo;s the goal, isn&rsquo;t it? &nbsp;To win! &nbsp;So the intermediate states of the game don&rsquo;t matter at all -- the only thing we propagate up our tree of game states is how frequently this particular move tends to win (and how frequently the simulation tends to play it).</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <script src="https://gist.github.com/andysalerno/f413913f589d9a6ea20c.js"></script>
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">Let me digress for a second to remind you that this is exactly how AlphaGo thinks. &nbsp;It doesn&rsquo;t care how much it wins by -- just that it wins. &nbsp;So while a human might think more like Minimax (</span><span class="c8 c2">I should make this move because in five turns I&rsquo;ll be in a good spot),</span> <span class="c2">AlphaGo leverages the power of MCTS (</span><span class="c8 c2">I should make this move because my simulations show it gives me a higher probability to win). &nbsp;</span><span class="c2">The exciting part is that the result of this project -- which I&rsquo;m getting to, I promise! -- is an agent that shows very similar tendencies to AlphaGo in this regard.</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">In summary: Monte Carlo tree search is exciting because it is goal-oriented, and allows for agents that make some very intriguing moves in their pursuit to win. &nbsp;An agent with a heuristic or evaluation function (like Minimax) might perform better than pure MCTS, but MCTS alone guarantees emergent behavior which I find to be more interesting.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">Now let&rsquo;s get down to it.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2 c12">Building the Game of Reversi</span>
+    </p>
+
+
+    <p class="c0"><span class="c2">The first step was to actually implement the game of Reversi so that my agent has something to play. &nbsp;I&rsquo;ll just show the interface since the implementation isn&rsquo;t hugely important. &nbsp;The code is in Python 3.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <script src="https://gist.github.com/andysalerno/23d212a3aa6bfbd79005.js"></script>
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">To run our game, we simply need to pass in two agents (one to control each color) to a Reversi object and then call play_game() on it. &nbsp;Every move is printed to stdout.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2 c12">Monte Carlo Agent</span>
+    </p>
+
+
+    <p class="c0"><span class="c2">Now before we get to our Monte Carlo agent, here is an example agent that makes completely random moves:</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <script src="https://gist.github.com/andysalerno/cff572b90d98163a4de0.js"></script>
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">As we can see from the random agent, we just need to define get_action() by having it return our choice. &nbsp;In our MCTS agent, our get_action() will just call a method named monte_carlo_search(), and return the result. &nbsp;Let&rsquo;s build the top level of monte_carlo_search() now:</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <script src="https://gist.github.com/andysalerno/b776d62fa74d68d7cc74.js"></script>
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">We can see from this that the Monte Carlo search algorithm has several distinct steps. &nbsp;In formal terms, these are: Selection, Expansion, Simulation, and Backpropagation. &nbsp;Some great visuals of those steps</span> <span class="c2 c10"><a class="c6" href="https://www.google.com/url?q=https://en.wikipedia.org/wiki/Monte_Carlo_tree_search%23Principle_of_operation&amp;sa=D&amp;ust=1458767681104000&amp;usg=AFQjCNGDGCzG7B_rWZiqQvXKdLLmIenPmQ">can be seen here at Wikipedia.</a></span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">In Selection, we traverse our tree by traveling down the nodes with the most promising win:play ratio (this is actually done using a mathematical formula that is more complicated than wins/plays, I&rsquo;ll get to it). &nbsp;Once we reach a leaf of the tree, we Expand that leaf to reveal more nodes. (In our implementation, selection is the method tree_policy())</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">In Expansion, we generate a new child node (or several) representing the states that could follow from the Selected state. &nbsp;If the Selected state was a win/loss, and therefore has no children, we return that state. &nbsp;Otherwise, we return the newly generated node. (In our implementation, this is bundled into the tree_policy())</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <p class="c0"><span class="c2">(Note: I am using 'state' and 'node' interchangeably here. A node is simply a container for a state that links it to its parent and children states, and also will hold the win/play stats when we update our tree.)
+
+
+    <p class="c0"><span class="c2">In Simulation, we run a single random simulation from the node that Expansion generated. &nbsp;The simulation makes random moves for each player until the end of the game, and then returns some value representing the result of the simulation -- a win or a loss.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">In Backpropagation, we take the result of the Simulation and propagate it up the tree, starting from the node on which we ran the simulation and ending at the root node (which represented the game state that was passed into the search function). &nbsp;In this step, every node on the path to the root increments its play count by one, and increments its win count by one only if the result was a win.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">The Selection-&gt;Expansion-&gt;Simulation-&gt;Backpropagation steps occur as many times as you would like, with more iterations producing better results. &nbsp;In my code, I implemented this using a timer (i.e., you have</span> <span class="c8 c2">x</span> <span class="c2">seconds to run simulations). &nbsp;Another choice would be to fix the amount of simulations that occur, instead of the amount of time you have to do them.</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">Having repeated that process many times, the algorithm now picks the child state of the passed in game state that was played the most amount of times in simulation.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">It may seem surprising that we pick the node that was</span> <span class="c8 c2">played</span> <span class="c2">the most, and not the node that won the most amount of games, or that had the highest win percentage. &nbsp;The reason for this is the way that nodes are picked in the Selection step.</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">Let&rsquo;s take a look at our Selection step, implemented by tree_policy():</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <script src="https://gist.github.com/andysalerno/c35eaaf98d1ef2cd1810.js"></script>
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">If you&rsquo;re confused about line 13, I should mention that a game_state object is simply a tuple of a game board object and a constant representing whose turn it is. &nbsp;So if black passes their turn, we convert from a game_state of ({the board}, BLACK) to ({the board}, WHITE). &nbsp;There may be a more elegant way to express this.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">You can see that we are traversing the tree by adding child nodes at each state until we&rsquo;ve &ldquo;saturated&rdquo; that state by visiting each of its children at least once. &nbsp;Once we&rsquo;ve done that, we start picking nodes based on the best_child() method. &nbsp;When I said earlier that picking the next node for Selection is more complicated than just the win:play ratio, that&rsquo;s what I meant.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">Instead of the win:play ratio, we are going to use an upper confidence bound.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2 c12">Upper Confidence Bound</span>
+    </p>
+
+
+    <p class="c0"><span class="c2">In &ldquo;vanilla&rdquo; MCTS, in the Selection phase we can pick the nodes to traverse however we want: most wins, highest win percentage, etc.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">However, it turns out that picking which node to visit next is a representation of the</span> <span class="c10 c2"><a class="c6" href="https://www.google.com/url?q=https://en.wikipedia.org/wiki/Multi-armed_bandit&amp;sa=D&amp;ust=1458767681117000&amp;usg=AFQjCNHaWQdNbslx7FNz411xx1nflk-zsg">multi-armed bandit problem</a></span><span class="c2">. &nbsp;I recommend you read the whole Wiki article, but in essence, the multi-armed bandit problem presents you with some amount of choices, with each choice giving you some unknown payoff. &nbsp;Think of several slot machines, where each machine has some fixed but unknown chance to win. &nbsp;The more you play each machine, the more you learn about its payoff rate. &nbsp;The goal is to balance exploration (&ldquo;I don&rsquo;t know much about that machine yet, I should give it a try&rdquo;) with gaining value (&ldquo;I know this machine is paying off really well so I should keep using it&rdquo;). If you think about it, this a direct restatement of our current problem: we have some amount of legal moves we can make.  Each time we test a move, we become more sure of its win rate, but we only have a limited time to run tests, so how much should we test each move?</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2">Luckily, this problem is very well known, and some very clever people named</span> <span class="c2"><a href="http://www.sztaki.hu/~szcsaba/papers/ecml06.pdf">Kocsis and Szepesv&aacute;ri</a> came up with a good solution. &nbsp;It&rsquo;s called an upper confidence bound, and it looks like this:</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">&nbsp;</span><span style="overflow: hidden; display: inline-block; margin: 0.00px 0.00px; border: 0.00px solid #000000; transform: rotate(0.00rad) translateZ(0px); -webkit-transform: rotate(0.00rad) translateZ(0px); width: 102.00px; height: 51.00px;"><img alt="\frac{w_i}{n_i} + c\sqrt{\frac{\ln t}{n_i}}" src="{{ site.url }}/images/image00.png" style="width: 102.00px; height: 51.00px; margin-left: 0.00px; margin-top: 0.00px; transform: rotate(0.00rad) translateZ(0px); -webkit-transform: rotate(0.00rad) translateZ(0px);" title=""></span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c2 c3">We operate this equation on each child node, and select the one with the maximum value. &nbsp;Here,</span> <span class="c3 c8 c2">wi</span> <span class="c3 c2">is the amount of wins the node has seen,</span> <span class="c3 c8 c2">ni</span> <span class="c3 c2">is the amount of times it has been played,</span> <span class="c3 c8 c2">t</span> <span class="c3 c2">is the amount of simulations its parent node has seen, and</span> <span class="c3 c8 c2">c</span> <span class="c3 c2">is some fixed constant that you can increase or decrease to be more or less &ldquo;exploration-oriented&rdquo;, respectably. &nbsp;Most sources I&rsquo;ve read deem sqrt(2) to be a good C value, and it&rsquo;s the one I used.</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">Let&rsquo;s take a look at our our best_child() method to see this implementation:</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <script src="https://gist.github.com/andysalerno/5e44410f1d6cba4c2319.js"></script>
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">This upper confidence bound is the reason we always pick the child with the most plays as our ultimate decision in MCTS. &nbsp;The upper confidence bound will prefer those valuable children to run more simulations, which correlates to a better win rate. &nbsp;Of course, when more than one node are tied for the most amount of play counts, we can break ties with their win counts.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">Almost done! &nbsp;Now we just have to backpropagate:</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <script src="https://gist.github.com/andysalerno/1250a2203ab7d8da3d10.js"></script>
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">And then return the child node that saw the most amount of plays (aka simulations):</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <script src="https://gist.github.com/andysalerno/f354afb0ab033a6e610f.js"></script>
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">There you have it! &nbsp;Given a state of the game, we performed simulations to determine the best possible next move, all without needing to tell the agent what makes a move good or bad.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2 c12">Optimizations and Modifications</span>
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">I&rsquo;m sure people reading this might notice potential areas for optimization or improvement. &nbsp;My own implementation went through several iterations after I used Python&rsquo;s profiler to pick out the biggest offenders. &nbsp;One huge improvement you can make is to keep a global mapping of each state you expand to the node you build for it. &nbsp;Then, when monte_carlo_search(game_state) is called, check to see if you already have a node created for that state from past turns. &nbsp;If you do, use it! &nbsp;You can gain some &ldquo;free simulations&rdquo; that way.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">I generally prefer the encapsulation approach of never accessing member variables of an object directly, but in the case of running hundreds to thousands of simulations per second, the overhead of many getter methods was really adding up. &nbsp;Therefore, I began accessing variables directly (such as node.game_state) instead of via getters, for a moderate performance increase.</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2 c12">Results</span>
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">The final monte-carlo Reversi agent is pretty strong! &nbsp;I am personally unable to beat it when giving it more than two seconds of simulation time per move. &nbsp;For science, I went online to several Reversi multiplayer websites, and tested the agent against real humans. &nbsp;With a simulation time of two to four seconds I could beat most players, and with a simulation of eight seconds I could beat nearly all players with few exceptions. &nbsp;(Sorry to those websites -- I&rsquo;m sure using a bot is against their terms. &nbsp;But it was for learning!)</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">The most exciting aspect of this agent (to me) is that it will frequently seem behind and yet display a high confidence rating. &nbsp;If you print out the win/play counts for each considered legal move at each turn, you can see how sure the agent is of its moves. &nbsp;</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+    <p class="c2"><span class="c3">Playing against the agent, I continuously found myself in situations where I thought I was far ahead, with no chance of losing, only to see my lead slip away. &nbsp;Here was the board state in the middle of one game in particular, me playing as Black:</span></p>
+    <p class="c1"><span class="c4"></span></p>
+    <p class="c2"><span class="c4">Enter a move x,y (or pass to pass): 7,7<br>Black plays at (7, 7)<br>7 - X - - - - - X <br>6 - - X - - - X - <br>5 - - - X X X X - <br>4 - - - O X X - - <br>3 X X O X X O X X <br>2 X X X X - O - - <br>1 - X X - X O - - <br>0 X X X - - - - - <br> &nbsp;0 1 2 3 4 5 6 7</span></p>
+    <p class="c1"><span class="c4"></span></p>
+    <p class="c2"><span class="c3">Two corners, a huge majority of the board under my control. &nbsp;Seems impossible to lose from here.</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c3">A few turns later, the agent was seeing itself win 30/70 simulated games. &nbsp;I figured I would keep increasing the gap until my victory:</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c4">(4, 6): (25/62)<br>(7, 6): (13/42)<br>(3, 0): (14/44)<br>(1, 6): (7/31)<br>(3, 1): (11/39)<br>(7, 4): (30/70)<br>(5, 6): (5/26)<br>306 simulations performed.<br>White plays at (7, 4)<br>7 - X - X - - - X <br>6 - - X X - - X - <br>5 - - X X X X X - <br>4 - - X X X X - O <br>3 X X X X O O O X <br>2 X X X X - O - - <br>1 - X X - X O - - <br>0 X X X - - - - - <br> &nbsp;0 1 2 3 4 5 6 7</span></p>
+    <p class="c1"><span class="c4"></span></p>
+    <p class="c2"><span class="c3">Imagine my surprise when the agent suddenly saw a spike in its win/play ratio, despite my apparent board advantage: </span></p>
+    <p class="c2"><span class="c4">(4, 7): (9/30)<br>(0, 7): (50/88)<br>(0, 1): (2/18)<br>(7, 6): (4/22)<br>(1, 4): (31/63)<br>(1, 5): (13/37)<br>(5, 6): (14/38)<br>(7, 5): (8/29)<br>(1, 6): (5/24)<br>(3, 1): (24/53)<br>(7, 2): (12/35)<br>433 simulations performed.<br>White plays at (0, 7)<br>7 O O O X - - - X <br>6 - - X O - - X - <br>5 - - X X O X X - <br>4 - - X X X O - O <br>3 X X X X X X O X <br>2 X X X X X O - - <br>1 - X X - X X - - <br>0 X X X X X X - - <br> &nbsp;0 1 2 3 4 5 6 7</span></p>
+    <p class="c1"><span class="c4"></span></p>
+    <p class="c2"><span class="c3">Sure, it had taken one corner, but I was on my way to three. &nbsp;It has a nice diagonal going from (2,7) to (6,3), but that couldn&rsquo;t be enough to win it the game, right?</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c3">Several turns later, White had managed to create another diagonal slice, splitting me in two. &nbsp;With another bump in its win/play confidence:</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c4">(7, 1): (50/89)<br>(0, 1): (39/74)<br>(7, 2): (115/171)<br>(3, 1): (137/198)<br>(6, 1): (216/293)<br>790 simulations performed.<br>White plays at (6, 1)<br>7 O O O O O - - X <br>6 - O O O - - X - <br>5 - - O X O X X X <br>4 X X X O X X X X <br>3 X X X X O X X X <br>2 X X X X X O X - <br>1 - X X - X X O - <br>0 X X X X X X - - <br> &nbsp;0 1 2 3 4 5 6 7</span></p>
+    <p class="c1"><span class="c4"></span></p>
+    <p class="c2"><span class="c3">A few more turns later, I see my chance to take a third corner, so I do. &nbsp;But apparently White doesn&rsquo;t care, because its win/play confidence didn&rsquo;t budge. &nbsp;The board, which had looked great for me several turns back, begins to look ominously White:</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c4">(0, 5): (49/83)<br>(0, 1): (25/52)<br>(7, 1): (142/193)<br>(7, 2): (183/240)<br>(3, 1): (258/322)<br>(7, 6): (229/291)<br>1162 simulations performed.<br>White plays at (3, 1)<br>7 O O O O O - - X <br>6 - O O O - O X - <br>5 - X X O O O X X <br>4 X X X O X O X X <br>3 X X X O X O X X <br>2 X X X O O X X - <br>1 - X X O X X X - <br>0 X X X X X X - X <br> &nbsp;0 1 2 3 4 5 6 7</span></p>
+    <p class="c1"><span class="c4"></span></p>
+    <p class="c2"><span class="c3">Then, a few moves later, the killing blow. &nbsp;White makes a move that it believes will win the game 686/692 times, even though it doesn&rsquo;t seem like that big of a move to me:</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c4">(6, 0): (120/147)<br>(7, 1): (20/39)<br>(0, 6): (82/108)<br>(7, 2): (55/79)<br>(6, 7): (288/313)<br>(7, 6): (686/692)<br>(0, 5): (115/142)<br>(0, 1): (78/103)<br>1494 simulations performed.<br>White plays at (7, 6)<br>7 O O O O O X - X <br>6 - O O O - X X O <br>5 - X X O O X O X <br>4 X X X O X O X X <br>3 X X X O O X X X <br>2 X X X O O X X - <br>1 - X X O X X X - <br>0 X X X X X X - X <br> &nbsp;0 1 2 3 4 5 6 7</span></p>
+    <p class="c1"><span class="c4"></span></p>
+    <p class="c2"><span class="c3">This is the sort of devious planning that can emerge from the chaos of random simulation. &nbsp;I can&rsquo;t help but feel outsmarted.</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c3">Even though it might feel like I still have a fighting chance, it&rsquo;s game over. &nbsp;White has entered a position where the win is guaranteed. &nbsp;After this move it couldn&rsquo;t lose if it tried, despite having only 20 pieces while I have 38:</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c4">(7, 1): (304/311)<br>(7, 2): (382/382)<br>(0, 6): (382/382)<br>(0, 5): (382/382)<br>(0, 1): (382/382)<br>(6, 7): (382/382)<br>(6, 0): (338/342)<br>1873 simulations performed.<br>White plays at (0, 6)<br>7 O O O O O X - X <br>6 O O O O X X X O <br>5 - O X X X X O X <br>4 X X O O X O X X <br>3 X X X O O X X X <br>2 X X X O O X X - <br>1 - X X O X X X - <br>0 X X X X X X - X <br> &nbsp;0 1 2 3 4 5 6 7</span></p>
+    <p class="c2"><span class="c4">(White: 20 Black: 38)</span></p>
+    <p class="c1"><span class="c4"></span></p>
+    <p class="c2"><span class="c3">Examine this board for a second and see if you can figure out how White has a guaranteed win. &nbsp;Black only has one move, at (0,5). &nbsp;This opens up White to capture a huge amount by playing&hellip; pretty much anywhere. &nbsp;And that&rsquo;s what it does. &nbsp;I&rsquo;m going to paste here the final moves of the game. &nbsp;Follow along and watch my kingdom topple:</span></p>
+    <p class="c1"><span class="c3"></span></p>
+    <p class="c2"><span class="c4">Enter a move x,y (or pass to pass): 0,5<br>Black plays at (0, 5)<br>7 O O O O O X - X <br>6 O O O O X X X O <br>5 X X X X X X O X <br>4 X X O O X O X X <br>3 X X X O O X X X <br>2 X X X O O X X - <br>1 - X X O X X X - <br>0 X X X X X X - X <br> &nbsp;0 1 2 3 4 5 6 7 <br><br>(0, 1): (605/605)<br>(6, 7): (605/605)<br>(7, 2): (605/605)<br>(6, 0): (606/606)<br>(7, 1): (605/605)<br>2646 simulations performed.<br>White plays at (6, 0)<br>7 O O O O O X - X <br>6 O O O O X X X O <br>5 X X X X X X O X <br>4 X X O O X O O X <br>3 X X X O O X O X <br>2 X X X O O X O - <br>1 - X X O X O O - <br>0 X X X X X X O X <br> &nbsp;0 1 2 3 4 5 6 7 <br><br>Enter a move x,y (or pass to pass): 7,1<br>Black plays at (7, 1)<br>7 O O O O O X - X <br>6 O O O O X X X O <br>5 X X X X X X O X <br>4 X X O O X O O X <br>3 X X X O O X O X <br>2 X X X O O X X - <br>1 - X X O X X X X <br>0 X X X X X X O X <br> &nbsp;0 1 2 3 4 5 6 7 <br><br>(7, 2): (1539/1539)<br>(6, 7): (1539/1539)<br>(0, 1): (1538/1538)<br>4609 simulations performed.<br>White plays at (6, 7)<br>7 O O O O O O O X <br>6 O O O O X O O O <br>5 X X X X O X O X <br>4 X X O O X O O X <br>3 X X X O O X O X <br>2 X X X O O X X - <br>1 - X X O X X X X <br>0 X X X X X X O X <br> &nbsp;0 1 2 3 4 5 6 7 <br><br>Black had no moves, and passed their turn.<br>7 O O O O O O O X <br>6 O O O O X O O O <br>5 X X X X O X O X <br>4 X X O O X O O X <br>3 X X X O O X O X <br>2 X X X O O X X - <br>1 - X X O X X X X <br>0 X X X X X X O X <br> &nbsp;0 1 2 3 4 5 6 7 <br><br>(0, 1): (2879/2879)<br>(7, 2): (2879/2879)<br>5757 simulations performed.<br>White plays at (0, 1)<br>7 O O O O O O O X <br>6 O O O O X O O O <br>5 O X X X O X O X <br>4 O X O O X O O X <br>3 O X O O O X O X <br>2 O O X O O X X - <br>1 O O O O X X X X <br>0 X X X X X X O X <br> &nbsp;0 1 2 3 4 5 6 7 <br><br>Black had no moves, and passed their turn.<br>7 O O O O O O O X <br>6 O O O O X O O O <br>5 O X X X O X O X <br>4 O X O O X O O X <br>3 O X O O O X O X <br>2 O O X O O X X - <br>1 O O O O X X X X <br>0 X X X X X X O X <br> &nbsp;0 1 2 3 4 5 6 7 <br><br>(7, 2): (16969/16969)<br>16968 simulations performed.<br>White plays at (7, 2)<br>7 O O O O O O O X <br>6 O O O O X O O O <br>5 O X X X O X O O <br>4 O X O O X O O O <br>3 O X O O O X O O <br>2 O O X O O O O O <br>1 O O O O X X X X <br>0 X X X X X X O X <br> &nbsp;0 1 2 3 4 5 6 7</span></p>
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2 c12">Conclusion</span>
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">You can see my</span> <span class="c10 c2 c13"><a class="c6" href="https://www.google.com/url?q=https://github.com/andysalerno/reversi-ai&amp;sa=D&amp;ust=1458767681152000&amp;usg=AFQjCNEO5VWzwfqNPGmy62tr6gQkLnSjgw">full code for this project on Github.</a></span><span class="c3 c2">&nbsp; Note that there are several small changes in my implementation that I ignored for this writeup to keep it simpler.</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">We&rsquo;re done, right? &nbsp;We made an agent that plays Reversi without being told how to play!</span>
+    </p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">Well, that&rsquo;s true. &nbsp;But my real goal is to</span> <span class="c3 c2 c8">teach</span> <span class="c3 c2">an agent to play. &nbsp;Monte Carlo tree search is</span> <span class="c3 c8 c2">not</span> <span class="c3 c2">a learning algorithm. &nbsp;It hasn&rsquo;t learned to play from experience; instead, it generates its own experiences on the fly each turn. &nbsp;To truly teach an agent how to play Reversi, you&rsquo;d need to let it play against itself thousands to millions of times, learning to play as it goes. &nbsp;This is called reinforcement learning, and we will be implementing it using a technique called Q-Learning&hellip;</span></p>
+
+
+    <p class="c0 c5">
+    </p>
+
+
+    <p class="c0"><span class="c3 c2">That part is still coming up! &nbsp;Next time. &nbsp;Thanks for reading.</span>
+    <p class="c0"><span class="c3 c2">(Did I make any typos or get anything totally wrong? My email address is in the footer.)</span>
+
+    <p class="c0"><span class="c3 c2 c12">Resources</span>
+    </p>
+    <a href="http://www.cameronius.com/cv/mcts-survey-master.pdf"><p class="c0"><span class="c3 c2">Cameron Browne, Edward Powley, Daniel Whitehouse, Simon Lucas, Peter I. Cowling, Philipp Rohlfshagen, Stephen Tavener, Diego Perez, Spyridon Samothrakis, Simon Colton (March 2012). "A Survey of Monte Carlo Tree Search Methods" (PDF). <i>IEEE Transactions on Computational Intelligence and AI in Games 4</i></span></a>
+
+    <a href="https://en.wikipedia.org/wiki/Monte_Carlo_tree_search"><p class="c0"><span class="c3 c2">"Monte Carlo Tree Search", <i>Wikipedia: The Free Encyclopedia</i></span></a>
+
+    <p class="c0"><span class="c3 c2">
+    </p>
+</body>
+</html>
