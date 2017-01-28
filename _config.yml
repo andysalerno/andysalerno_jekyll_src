@@ -16,9 +16,10 @@
 title: /dev/null
 email: andysalerno@gmail.com
 description: > # this means to ignore newlines until "baseurl:"
-  I'm not clever enough for a good "tech-blog description."
+  Hello from ~~Chicago~~ ~~St. Louis~~ ~~Kansas City~~ the pacific northwest.
 baseurl: "" # the subpath of your site, e.g. /blog
 url: "https://andysalerno.com" # the base hostname & protocol for your site, e.g. http://example.com
+permalink: "/:year/:month/:title"
 github_username:  andysalerno
 
 # Build settings
