@@ -1,3 +1,8 @@
+---
+layout:  post
+title: "Compiling Simple Python Extensions in 2017"
+categories: cython, compiling python, python extensions, visual studio build tools
+---
 # Compiling Python extensions on Windows (in 2017)
 
 Lately I've returned to my Monte Carlo tree search project, which is an implementation in Python of the Monte Carlo tree search method, applied to the game of Reversi (aka Othello).
